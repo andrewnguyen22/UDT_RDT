@@ -1,5 +1,4 @@
 //source: https://github.com/amineamanzou/UDP-TCP-File-Transfer
-
 #include <fcntl.h>
 #include <unistd.h>
 #include <strings.h>
@@ -12,32 +11,59 @@
 #include <sys/uio.h>
 #include <sys/stat.h>
 // Buffer size
-#define BUFFER_SIZE 256
+#define BUFFER_SIZE 4096
 #define PORT_NUM 1050
 #define FILENAME "test.txt"
-struct sockaddr_in sock_serv;
+#define DISCARD_RATE        0.00 // Discard rate (from 0.0 to 1.0)
+
+
+double rand_val(void)
+{
+  const long  a =      16807;  // Multiplier
+  const long  y = 2147483647;  // Modulus
+  const long  q =     127773;  // y div a
+  const long  r =       2836;  // y mod a
+  static long x = 1;           // Random int value (seed is set to 1)
+  long        x_div_q;         // x divided by q
+  long        x_mod_q;         // x modulo q
+  long        x_new;           // New x value
+
+  // RNG using integer arithmetic
+  x_div_q = x / q;
+  x_mod_q = x % q;
+  x_new = (a * x_mod_q) - (r * x_div_q);
+  if (x_new > 0)
+    x = x_new;
+  else
+    x = x_new + y;
+
+  // Return a random value between 0.0 and 1.0
+  return((double) x / y);
+}
+
+
+
 
 int main (){
-	//server variables ************
-	int file, server_s;
-	char in_buf[BUFFER_SIZE];
-	long long count=0, n; // long type
-  unsigned int l=sizeof(struct sockaddr_in);
+	double z;                   // Uniform random value 0 to 1
+	int									file;
+	int                 server_s;
+	int                 retcode;         // Return code
+	int                 addr_len;        // Internet address length
+	char 								in_buf[BUFFER_SIZE];
+	char                out_buf[3];   		// Output buffer for data
+	long long 					count=0;
+	long long 					n;
+  unsigned int 				l;
+  struct sockaddr_in  client;     			// Client Internet address
+	struct sockaddr_in  sock_serv;
+  struct in_addr      client_ip_addr;  // Client IP address
 
-	//client variables ********
-  struct sockaddr_in   server_addr;     // Server Internet address
-  struct sockaddr_in   client;     			// Client Internet address
-  struct in_addr       client_ip_addr;  // Client IP address
-  int                  addr_len;        // Internet address length
-  char                 out_buf[3];   		// Output buffer for data
-  int                  retcode;         // Return code
-
-  server_s = socket(AF_INET,SOCK_DGRAM,0);
+  server_s = socket(AF_INET,SOCK_DGRAM,0);	//Server Socket Setup UDT
 	if (server_s < 0)
 	{
-		printf("*** ERROR - socket() failed \n");
+		printf("The server socket was unable to initialize \n");
 		exit(-1);
-
 	}
 
 	l = sizeof(struct sockaddr_in);
@@ -48,12 +74,10 @@ int main (){
 	sock_serv.sin_addr.s_addr=htonl(INADDR_ANY);
 
 	if(bind(server_s,(struct sockaddr*)&sock_serv,l)==-1){
-		printf("*** ERROR - bind() failed \n");
+		printf("Unable to bind the server socket \n");
     exit(-1);
 	}
 
-	//bzero(FILENAME,256);
-	//sprintf(FILENAME,"new_file");
 	printf("Creating the output file : %s\n",FILENAME);
 
 	//open file
@@ -70,12 +94,13 @@ int main (){
 
   // Print an informational message of IP address and port of the client
 	client.sin_port=htons(1050);
-  printf("IP address of client = %s  port = %d \n", inet_ntoa(client_ip_addr),
-    ntohs(client.sin_port));
+	printf("STARTING PACKET... \n");
 	int resend = 0;
 	int increment = 0;
+	int resend_count = 0;
 	//Sending
 	while(n){
+		printf("\n\n\n\n");
 		printf("%lld of data received \n",n);
 		if(n < 0){
 			perror("read fails");
@@ -83,16 +108,24 @@ int main (){
 		}
 		printf("CLIENT RESEND BYTE IS... %c \n", in_buf[n-1]);
 		printf("SERVER RESEND BYTE IS... %c \n", resend+'0');
-		if(resend+'0' == in_buf[n-1]){//not a resend
-			printf("Not a resend...\n");
+
+		z = rand_val();
+
+	  if (z > DISCARD_RATE)
+	  {
 			out_buf[0]='A';
 			out_buf[1]='C';
 			out_buf[2]='K';
+			client.sin_port=htons(1050);
+			printf("IP address of client = %s  port = %d \n", inet_ntoa(client_ip_addr),
+		    htons(client.sin_port));
 			retcode = sendto(server_s, out_buf, 3, 0,
 				(struct sockaddr *)&client, sizeof(client));
+	  }
+		if(resend+'0' == in_buf[n-1]){//not a resend
 			if (retcode < 0)
 			{
-				printf("*** ERROR - sendto() failed \n");
+				printf("*** ERROR - sendto() failed %i \n", retcode);
 				exit(-1);
 			}
 			else{
@@ -105,13 +138,8 @@ int main (){
 			write(file,in_buf,n);
 		}
 		else{
-			//its a resend..
-			printf("It's A Resend... \n");
-			out_buf[0]='A';
-			out_buf[1]='C';
-			out_buf[2]='K';
-			retcode = sendto(server_s, out_buf, 3, 0,
-				(struct sockaddr *)&client, sizeof(client));
+			//its a resend..r
+			resend_count++;
 			if (retcode < 0)
 			{
 				printf("*** ERROR - sendto() failed \n");
@@ -123,11 +151,10 @@ int main (){
 		bzero(out_buf,3);
 		printf("waiting for new packets...");
     n = recvfrom(server_s,&in_buf,BUFFER_SIZE,0,(struct sockaddr *)&client,&l);
-		client.sin_port=htons(1050);
 	}
 	printf("Transfer total: %lld\n",count);
 	printf("Total file size = : %lld\n",(count-increment));
-
+	printf("Total num of resends = : %i\n", resend_count);
 	//Close the sockets
 	retcode = close(server_s);
 	if (retcode < 0)
